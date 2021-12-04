@@ -5,6 +5,8 @@ library(gamlss.add)
 library(mltools)
 library(ggplot2)
 library(pROC)
+library(ade4)
+library(adegraphics)
 
 ################################################################################
 #                                  import data                                 #
@@ -24,7 +26,7 @@ data_placenta <- data_placenta[, -varSupp]
 #                                centrer reduire                               #
 ################################################################################
 
-data_placenta <- as.data.frame(scale(data_placenta[,-1], center=TRUE, scale=TRUE))
+data_placenta[,-1] <- as.data.frame(scale(data_placenta[,-1], center=TRUE, scale=TRUE))
 
 # varNan <- unique(as.data.frame(which(is.nan(result), arr.ind=T))$col)
 # result <- result[, -varNan]
@@ -37,7 +39,7 @@ train_test = function(data, proportion){
   data <- data %>% rowid_to_column("rowid")
   train_set <- slice_sample(data, prop = proportion)
   test_set <- data %>% anti_join(as.data.frame(train_set), by = "rowid")
-  return(list(train=train_set, test=test_set))
+  return(list(train=train_set[,-1], test=test_set[,-1]))
 }
 
 ################################################################################
@@ -78,8 +80,28 @@ acc_mc = function(cm){
   return(list(acc=acc, mc=mc))
 }
 
+################################################################################
+#                                      ACP                                     #
+################################################################################
+
 sets = train_test(data_placenta, .30)
-preds <- neural_network(sets, c(450, 200))
+
+pcaAll <- dudi.pca(sets$train[-1], scannf = FALSE, nf = 2)
+inertia <- inertia.dudi(pcaAll)
+plot(inertia$tot.inertia$`cum(%)`)
+
+pcaAll <- dudi.pca(data_placenta[-1], scannf = FALSE, nf = 14)
+# s.corcircle(pcaAll$co)
+
+sets$train[,-1] <- pcaAll$l1
+
+sets$test[,-1] <- as.data.frame(scale(as.matrix(sets$test[-1]) %*% as.matrix(pcaAll$c1)))
+
+################################################################################
+#                                   Results                                    #
+################################################################################
+
+preds <- neural_network(sets, c(8, 4))
 
 cm <- confusion_matrix(sets$test$CI2, preds)
 results <- acc_mc(cm)
@@ -91,17 +113,3 @@ results <- acc_mc(cm)
 
 plot(roc(sets$test$CI2, preds, direction="<"), print.auc=TRUE)
 
-################################################################################
-#                                      ACP                                     #
-################################################################################
-
-library(ade4)
-library(adegraphics)
-pcaAll <- dudi.pca(data_placenta[-1], scannf = FALSE, nf = 2)
-inertia <- inertia.dudi(pcaAll)
-plot(inertia$tot.inertia$`cum(%)`)
-
-pcaAll <- dudi.pca(data_placenta[-1], scannf = FALSE, nf = 11)
-s.corcircle(pcaAll$co)
-
-z<-sapply(data_placenta[,-1], mean)
