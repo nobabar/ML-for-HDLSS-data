@@ -14,6 +14,22 @@ data_placenta <- read.csv("membrane.placentaire.tsv", sep = "\t")
 data_placenta$CI2 = factor(data_placenta$CI2)
 
 ################################################################################
+#                                  filter data                                 #
+################################################################################
+
+varSupp <- which(apply(data_placenta, 2, var)== 0)
+data_placenta <- data_placenta[, -varSupp]
+
+################################################################################
+#                                centrer reduire                               #
+################################################################################
+
+data_placenta <- as.data.frame(scale(data_placenta[,-1], center=TRUE, scale=TRUE))
+
+# varNan <- unique(as.data.frame(which(is.nan(result), arr.ind=T))$col)
+# result <- result[, -varNan]
+
+################################################################################
 #                         separate into train and test                         #
 ################################################################################
 
@@ -87,3 +103,5 @@ plot(inertia$tot.inertia$`cum(%)`)
 
 pcaAll <- dudi.pca(data_placenta[-1], scannf = FALSE, nf = 11)
 s.corcircle(pcaAll$co)
+
+z<-sapply(data_placenta[,-1], mean)
