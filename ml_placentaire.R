@@ -1,107 +1,14 @@
-library(dplyr)
-library(tibble)
-library(neuralnet)
-library(gamlss.add)
 library(mltools)
-library(ggplot2)
 library(pROC)
-library(ade4)
-library(adegraphics)
-
-################################################################################
-#                                  import data                                 #
-################################################################################
-
-data_placenta <- read.csv("membrane.placentaire.tsv", sep = "\t")
-data_placenta$CI2 = factor(data_placenta$CI2)
-
-################################################################################
-#                                  filter data                                 #
-################################################################################
-
-varSupp <- which(apply(data_placenta, 2, var)== 0)
-data_placenta <- data_placenta[, -varSupp]
-
-################################################################################
-#                                centrer reduire                               #
-################################################################################
-
-data_placenta[,-1] <- as.data.frame(scale(data_placenta[,-1], center=TRUE, scale=TRUE))
-
-# varNan <- unique(as.data.frame(which(is.nan(result), arr.ind=T))$col)
-# result <- result[, -varNan]
-
-################################################################################
-#                         separate into train and test                         #
-################################################################################
-
-train_test = function(data, proportion){
-  data <- data %>% rowid_to_column("rowid")
-  train_set <- slice_sample(data, prop = proportion)
-  test_set <- data %>% anti_join(as.data.frame(train_set), by = "rowid")
-  return(list(train=train_set[,-1], test=test_set[,-1]))
-}
-
-################################################################################
-#                             create neural network                            #
-################################################################################
-
-neural_network = function(data, nneurones){
-  nn <- neuralnet(CI2 ~ ., data=data$train,
-                  hidden=nneurones,
-                  stepmax=1e+09)
-  preds <- c(0, 1)[apply(predict(nn, data$test), 1, which.max)]
-  return(preds)
-}
-
-################################################################################
-#                           compute confusion matrix                           #
-################################################################################
-
-confusion_matrix = function(actuals, preds){
-  return(table(preds, actuals))
-}
-
-complex_confusion_matrix = function(actuals, preds){
-  return(confusionMatrix(as.factor(preds), actuals))
-}
-
-################################################################################
-#                      compute accuracy and Matthew coeff                      #
-################################################################################
-
-perc_match = function(cmatrix){
-  return (sum(diag(cmatrix)) / sum(cmatrix) * 100)
-}
-
-acc_mc = function(cm){
-  acc <- perc_match(cm)
-  mc <- mcc(confusionM=matrix(cm, nrow(cm)))
-  return(list(acc=acc, mc=mc))
-}
-
-################################################################################
-#                                      ACP                                     #
-################################################################################
-
-sets = train_test(data_placenta, .30)
-
-pcaAll <- dudi.pca(sets$train[-1], scannf = FALSE, nf = 2)
-inertia <- inertia.dudi(pcaAll)
-plot(inertia$tot.inertia$`cum(%)`)
-
-pcaAll <- dudi.pca(data_placenta[-1], scannf = FALSE, nf = 14)
-# s.corcircle(pcaAll$co)
-
-sets$train[,-1] <- pcaAll$l1
-
-sets$test[,-1] <- as.data.frame(scale(as.matrix(sets$test[-1]) %*% as.matrix(pcaAll$c1)))
+library(scatterplot3d)
 
 ################################################################################
 #                                   Results                                    #
 ################################################################################
 
-preds <- neural_network(sets, c(8, 4))
+sets = train_test(data_placenta, .30)
+
+preds <- neural_network(sets, c(180, 90))
 
 cm <- confusion_matrix(sets$test$CI2, preds)
 results <- acc_mc(cm)
@@ -110,6 +17,59 @@ results <- acc_mc(cm)
 #                                   ROC curve                                  #
 ################################################################################
 
-
 plot(roc(sets$test$CI2, preds, direction="<"), print.auc=TRUE)
 
+################################################################################
+#                           Optimize number of neurons                         #
+################################################################################
+
+opt_2hidden = function(start=1, stop, step=1, nrep=5){
+  acc_list = c()
+  n1_list = c()
+  n2_list = c()
+  for (n1 in seq(data, start, step, stop)){
+    for (n2 in seq(1, (n1+1)/2)){
+      acc=0
+      for (iter in seq(nrep)){
+        preds <- neural_network(data, c(n1, n2))
+        cm <- confusion_matrix(data$test$CI2, preds)
+        acc = acc + acc_mc(cm)$acc
+      }
+      acc = acc/nrep
+      acc_list = c(acc_list, acc)
+      n1_list = c(n1_list, n1)
+      n2_list = c(n2_list, n2)
+      
+      print(paste("n1: ", n1, "\t n2: ", n2, "\n acc: ", acc))
+    }
+  }
+  return(list(acc=acc_list, n1=n1_list, n2=n2_list))
+}
+
+
+opt_1hidden = function(data, start=1, stop, step=1, nrep=5){
+  acc_list = c()
+  n_list = c()
+  for (n in seq(start, stop, step)){
+    acc=0
+    for (iter in seq(1, nrep)){
+      preds <- neural_network(data, n)
+      cm <- confusion_matrix(data$test$CI2, preds)
+      acc = acc + acc_mc(cm)$acc
+    }
+    acc = acc/nrep
+    acc_list = c(acc_list, acc)
+    n_list = c(n_list, n)
+    
+    print(paste("n: ", n, "\t acc: ", acc))
+  }
+  return(list(acc=acc_list, n=n_list))
+}
+
+################################################################################
+#                                plot n neurones                               #
+################################################################################
+
+# scatterplot3d(acc_list_2, n1_list, n2_list)
+
+# plot(acc_list_1, n_list)
