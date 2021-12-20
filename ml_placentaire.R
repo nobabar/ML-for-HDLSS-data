@@ -18,6 +18,11 @@ library(mltools)
 library(pROC)
 library(scatterplot3d)
 
+# seed ----
+# force seed for all functions
+addTaskCallback(function(...) {set.seed(2);TRUE})
+
+
 # import data ----
 
 data_placenta <- read.csv("data/membrane.placentaire.tsv", sep="\t")
@@ -148,7 +153,7 @@ opt_2hidden = function(data, start=1, stop, step=1){
   for (n1 in seq(start, stop, step)){
     for (n2 in seq(1, (n1+1)/2)){
       preds <- neural_network(data, c(n1, n2))
-      cm <- confusion_matrix(data$test$CI2, preds)
+      cm <- confusion_matrix(data$test$CI2, preds)  
       acc <- acc_mc(cm)$acc
       
       acc_list <- c(acc_list, acc)
@@ -177,17 +182,64 @@ opt_1hidden = function(data, start=1, stop, step=1){
   return(list(acc=acc_list, n=n_list))
 }
 
-optim_res <- opt_2hidden(sets, 1, 60, 1)
+optim_res <- opt_2hidden(sets, 1, ncol(sets$train)*2)
+
+x <- optim_res$n1
+y <- optim_res$n2
+z <- optim_res$acc
 
 # plot n neurones ----
 
 # plot(res$n, res$acc)
-scatterplot3d(res$acc, res$n1, res$n2)
+# scatterplot3d(z, x, y)
+
+fit <- lm(z~x+y)
+
+grid.lines = 40
+x.pred <- seq(min(x), max(x), length.out = grid.lines)
+y.pred <- seq(min(y), max(y), length.out = grid.lines)
+xy <- expand.grid(x = x.pred, y = y.pred)
+z.pred <- matrix(predict(fit, newdata = xy), 
+                 nrow = grid.lines, ncol = grid.lines)
+
+fitpoints <- predict(fit)
+m <- matrix(fitpoints, nrow = length(x), ncol = length(y))
+
+# scatter plot with regression plane
+
+# library(plot3D)
+# scatter3D(x, y, z, pch = 19, cex = 1,colvar = NULL, col="red3", 
+#           theta = 80, phi = 20, bty="b",
+#           xlab = "n1", ylab = "n2", zlab = "ACC",  
+#           surf = list(x = x.pred, y = y.pred, z = z.pred, facets = TRUE,
+#                       col=ramp.col(col = c("dodgerblue3","seagreen2"),
+#                                    n = 300, alpha=0.9),
+#                       border="black"),
+#           main = "Accuracy of model and number of hidden neurones")
+
+
+library(plotly)
+plot_ly() %>%
+  add_trace(x = x, 
+            y = y,
+            z = z, 
+            type = "scatter3d", 
+            mode = "markers",
+            marker = list(size = 5, color = 'rgb(17, 157, 255)',
+                          line = list(color = 'rgb(0, 0, 0)',
+                                      width = 2))) %>%
+  add_surface(x = x.pred,
+              y = y.pred,
+              z = z.pred,
+              type = "surface",
+              colorscale = "Viridis")
 
 # compute with correct number of neurones ----
 
-preds <- neural_network(sets, c(optim_res$n1[which.max(res$acc)], 
-                                      optim_res$n2[which.max(res$acc)]))
+# preds <- neural_network(sets, c(optim_res$n1[which.max(optim_res$acc)], 
+#                                 optim_res$n2[which.max(optim_res$acc)]))
+
+preds <- neural_network(sets, c(68,2))
 
 cm <- confusion_matrix(sets$test$CI2, preds)
 results <- acc_mc(cm)
