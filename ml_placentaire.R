@@ -1,22 +1,29 @@
-# data juggling ----
-library(caret, include.only=c('findCorrelation', 'confusionMatrix'))
+# libraries ----
+# data juggling
+library(caret, include.only=c('findCorrelation', 'findLinearCombos'))
 library(tibble, include.only='rowid_to_column')
 library(dplyr)
 
-# neuralnet ----
+# neuralnet
 # library(caret, include.only='confusionMatrix')
 library(neuralnet)
 # for plotting neuralnet
 # library(gamlss.add)
 
-# PCA ----
+# PCA
 library(ade4)
 library(adegraphics)
+library(factoextra)
 
-# tests ----
+# tests
 library(mltools)
 library(pROC)
+
+#plots
+library(viridisLite)
+library(plot3D)
 library(scatterplot3d)
+library(plotly)
 
 # seed ----
 # force seed for all functions
@@ -33,16 +40,23 @@ data_placenta$CI2 <- factor(data_placenta$CI2)
 varSupp <- which(apply(data_placenta, 2, var)== 0)
 data_placenta <- data_placenta[, -varSupp]
 
-cor_matrix <- cor(data_placenta[,-1])
-cor_col <- findCorrelation(cor_matrix, cutoff=0.9)+1
-data_placenta <- data_placenta[, -cor_col]
+cor_col <- findCorrelation(cor(data_placenta[,-1]), cutoff=0.8)
+data_placenta <- data_placenta[, -cor_col+1]
+
+col_col <- findLinearCombos(data_placenta[,-1])
+data_placenta <- data_placenta[, -col_col$remove+1]
 
 # center reduce ----
+
+par(mfrow=c(1, 2))
+boxplot(data_placenta[,-1])
 
 # PCA is sensitive to input scaling, so we will scale the data first
 data_placenta[,-1] <- as.data.frame(scale(data_placenta[,-1],
                                           center=TRUE,
                                           scale=TRUE))
+boxplot(data_placenta[,-1])
+dev.off()
 
 # export data ----
 
@@ -66,7 +80,7 @@ train_test = function(data, proportion){
 neural_network = function(data, nneurones){
   nn <- neuralnet(CI2 ~ ., data=data$train,
                   hidden=nneurones,
-                  stepmax=1e+09)
+                  stepmax=1e+06, rep=3)
   predictions <- c(0, 1)[apply(predict(nn, data$test), 1, which.max)]
   return(predictions)
 }
@@ -75,10 +89,6 @@ neural_network = function(data, nneurones){
 
 confusion_matrix = function(actuals, preds){
   return(table(preds, actuals))
-}
-
-complex_cm = function(actuals, preds){
-  return(confusionMatrix(as.factor(preds), actuals))
 }
 
 # compute accuracy and Matthew coeff ----
@@ -104,15 +114,32 @@ PCA = function(data){
   inertia <- inertia.dudi(mock_pca)
   
   # we can determine the optimal number of dimension graphically
-  # plot(inertia$tot.inertia$`cum(%)`)
+  plot(inertia$tot.inertia$`cum(%)`)
   
-  # but here we will use the condition of keeping 90% of the information
-  ndim <- min(which(inertia$tot.inertia$`cum(%)`>90))
+  # but here we will use the condition of keeping 80% of the information
+  ndim <- min(which(inertia$tot.inertia$`cum(%)`>80))
+  abline(v=ndim)
   
   # perform pca once again, with correct number of final dimensions
   final_pca <- dudi.pca(data[-1],
                         scannf=FALSE,
                         nf=ndim)
+  
+  # graph the variables
+  fviz_pca_var(final_pca,
+               col.var = "contrib", # Color by contributions to the PC
+               gradient.cols = viridis(100)
+  )
+  
+  fviz_pca_ind(final_pca,
+               col.ind = sets$train$CI2, # color by groups
+               palette = c("#00AFBB",  "#FC4E07"),
+               addEllipses = TRUE, # Concentration ellipses
+               ellipse.type = "norm",
+               legend.title = "Groups",
+               axes = c(1, 2)
+  )
+  
   return(final_pca)
 }
 
@@ -142,88 +169,92 @@ sets <- train_test(data_placenta, .70)
 
 sets <- comp_pca(sets)
 
-preds <- neural_network(sets, 15)
-
 # Optimize number of neurons ----
 
+opt_1hidden = function(data){
+  fitControl <- caret::trainControl(method = "repeatedcv", 
+                                    number = 10, 
+                                    repeats = 5, 
+                                    classProbs = TRUE,
+                                    summaryFunction = caret::twoClassSummary)
+
+  nnetGrid <-  expand.grid(size = seq(from = 1, to = ncol(sets$train)/2, by = 1),
+                           decay = c(1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3))
+
+  levels(data$train$CI2) <- c("No", "Yes")
+
+  nnetFit <- caret::train(CI2 ~ ., 
+                          data = data$train,
+                          method = "nnet",
+                          metric = "ROC",
+                          trControl = fitControl,
+                          tuneGrid = nnetGrid,
+                          verbose = FALSE)
+  return(nnetFit)
+}
+
+# fit1 <- opt_1hidden(sets$train)
+# plot(fit1, lwd=2)
+
 opt_2hidden = function(data, start=1, stop, step=1){
-  acc_list <- c()
+  auc_list <- c()
   n1_list <- c()
   n2_list <- c()
   for (n1 in seq(start, stop, step)){
     for (n2 in seq(1, (n1+1)/2)){
       preds <- neural_network(data, c(n1, n2))
-      cm <- confusion_matrix(data$test$CI2, preds)  
-      acc <- acc_mc(cm)$acc
+      auc <- auc(data$test$CI2, preds)
       
-      acc_list <- c(acc_list, acc)
+      auc_list <- c(auc_list, auc)
       n1_list <- c(n1_list, n1)
       n2_list <- c(n2_list, n2)
       
       # print(paste("n1: ", n1, "    n2: ", n2, "\n acc: ", acc))
     }
   }
-  return(list(acc=acc_list, n1=n1_list, n2=n2_list))
+  return(list(auc=auc_list, n1=n1_list, n2=n2_list))
 }
 
-opt_1hidden = function(data, start=1, stop, step=1){
-  acc_list <- c()
-  n_list <- c()
-  for (n in seq(start, stop, step)){
-    preds <- neural_network(data, n)
-    cm <- confusion_matrix(data$test$CI2, preds)
-    acc <- acc_mc(cm)$acc
-
-    acc_list <- c(acc_list, acc)
-    n_list <- c(n_list, n)
-    
-    print(paste("n: ", n, "    acc: ", acc))
-  }
-  return(list(acc=acc_list, n=n_list))
-}
-
-optim_res <- opt_2hidden(sets, 1, ncol(sets$train)*2)
+optim_1 <- opt_1hidden(sets)
+optim_res <- opt_2hidden(sets, stop=floor(ncol(sets$train)*1.3))
 
 x <- optim_res$n1
 y <- optim_res$n2
-z <- optim_res$acc
-
-# plot n neurones ----
-
-# plot(res$n, res$acc)
-# scatterplot3d(z, x, y)
+z <- optim_res$auc
 
 fit <- lm(z~x+y)
+fit1 <- lm(z~x)
+fit2 <- lm(z~y)
+
+fitpoints1 <- predict(fit1)
+fitpoints2 <- predict(fit2)
+plot(z~x)
+lines(fitpoints1)
+plot(z~y)
+lines(fitpoints2)
 
 grid.lines = 40
 x.pred <- seq(min(x), max(x), length.out = grid.lines)
 y.pred <- seq(min(y), max(y), length.out = grid.lines)
 xy <- expand.grid(x = x.pred, y = y.pred)
-z.pred <- matrix(predict(fit, newdata = xy), 
+z.pred <- matrix(predict(fit, newdata = xy),
                  nrow = grid.lines, ncol = grid.lines)
 
-fitpoints <- predict(fit)
-m <- matrix(fitpoints, nrow = length(x), ncol = length(y))
 
-# scatter plot with regression plane
+scatter3D(x, y, z, pch = 19, cex = 1, colvar = NULL, col="red3",
+          theta = 120, phi = 20, bty="b",
+          xlab = "n1", ylab = "n2", zlab = "AUC",
+          surf = list(x = x.pred, y = y.pred, z = z.pred, facets = TRUE,
+                      col=ramp.col(col = viridis(100),
+                                   n = 300, alpha=0.9),
+                      border="black"),
+          main = "Accuracy of model and number of hidden neurones")
 
-# library(plot3D)
-# scatter3D(x, y, z, pch = 19, cex = 1,colvar = NULL, col="red3", 
-#           theta = 80, phi = 20, bty="b",
-#           xlab = "n1", ylab = "n2", zlab = "ACC",  
-#           surf = list(x = x.pred, y = y.pred, z = z.pred, facets = TRUE,
-#                       col=ramp.col(col = c("dodgerblue3","seagreen2"),
-#                                    n = 300, alpha=0.9),
-#                       border="black"),
-#           main = "Accuracy of model and number of hidden neurones")
-
-
-library(plotly)
 plot_ly() %>%
-  add_trace(x = x, 
+  add_trace(x = x,
             y = y,
-            z = z, 
-            type = "scatter3d", 
+            z = z,
+            type = "scatter3d",
             mode = "markers",
             marker = list(size = 5, color = 'rgb(17, 157, 255)',
                           line = list(color = 'rgb(0, 0, 0)',
@@ -234,12 +265,14 @@ plot_ly() %>%
               type = "surface",
               colorscale = "Viridis")
 
+max_auc  <- which(z.pred == max(z.pred), arr.ind = TRUE)
+opt_n1 <- x.pred[max_auc[2]]
+opt_n2 <- y.pred[max_auc[1]]
+
 # compute with correct number of neurones ----
 
-# preds <- neural_network(sets, c(optim_res$n1[which.max(optim_res$acc)], 
-#                                 optim_res$n2[which.max(optim_res$acc)]))
+preds <- neural_network(sets, c(opt_n1, opt_n2))
 
-preds <- neural_network(sets, c(68,2))
 
 cm <- confusion_matrix(sets$test$CI2, preds)
 results <- acc_mc(cm)
