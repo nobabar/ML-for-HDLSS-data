@@ -1,6 +1,8 @@
 # libraries ----
 # data juggling
-library(caret, include.only=c('findCorrelation', 'findLinearCombos'))
+library(caret, include.only=c('findCorrelation', 
+                              'findLinearCombos', 
+                              'nearZeroVar'))
 library(tibble, include.only='rowid_to_column')
 library(dplyr)
 
@@ -37,7 +39,7 @@ data_placenta$CI2 <- factor(data_placenta$CI2)
 
 # filter data ----
 
-varSupp <- which(apply(data_placenta, 2, var)== 0)
+varSupp <- caret::nearZeroVar(data_placenta)
 data_placenta <- data_placenta[, -varSupp]
 
 cor_col <- findCorrelation(cor(data_placenta[,-1]), cutoff=0.8)
@@ -91,16 +93,10 @@ confusion_matrix = function(actuals, preds){
   return(table(preds, actuals))
 }
 
-# compute accuracy and Matthew coeff ----
+# compute accuracy ----
 
 perc_match = function(cmatrix){
   return (sum(diag(cmatrix)) / sum(cmatrix) * 100)
-}
-
-acc_mc = function(cmatrix){
-  acc <- perc_match(cmatrix)
-  mc <- mcc(confusionM=matrix(cmatrix, nrow(cmatrix)))
-  return(list(acc=acc, mc=mc))
 }
 
 # PCA ----
@@ -178,13 +174,13 @@ opt_1hidden = function(data){
                                     classProbs = TRUE,
                                     summaryFunction = caret::twoClassSummary)
 
-  nnetGrid <-  expand.grid(size = seq(from = 1, to = ncol(sets$train)/2, by = 1),
+  nnetGrid <-  expand.grid(size = seq(from = 1, to = ncol(sets$train)*2, by = 1),
                            decay = c(1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3))
 
-  levels(data$train$CI2) <- c("No", "Yes")
+  levels(data$CI2) <- c("No", "Yes")
 
   nnetFit <- caret::train(CI2 ~ ., 
-                          data = data$train,
+                          data = data,
                           method = "nnet",
                           metric = "ROC",
                           trControl = fitControl,
@@ -215,7 +211,6 @@ opt_2hidden = function(data, start=1, stop, step=1){
   return(list(auc=auc_list, n1=n1_list, n2=n2_list))
 }
 
-optim_1 <- opt_1hidden(sets)
 optim_res <- opt_2hidden(sets, stop=floor(ncol(sets$train)*1.3))
 
 x <- optim_res$n1
@@ -275,7 +270,7 @@ preds <- neural_network(sets, c(opt_n1, opt_n2))
 
 
 cm <- confusion_matrix(sets$test$CI2, preds)
-results <- acc_mc(cm)
+acc <- perc_match(cm)
 
 # ROC curve ----
 
