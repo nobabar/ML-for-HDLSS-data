@@ -1,3 +1,8 @@
+# ---
+# title: Prediction de la permeabilite du placenta par un reseau de neurones
+# autors: Fernando Aguirre Huacaychuco | William Amory | Jeyani George Clement | Baptiste Rousseau | Maya Zygadlo
+# ---
+
 # libraries ----
 # data juggling
 library(caret, include.only=c('findCorrelation', 
@@ -7,7 +12,6 @@ library(tibble, include.only='rowid_to_column')
 library(dplyr)
 
 # neuralnet
-# library(caret, include.only='confusionMatrix')
 library(neuralnet)
 # for plotting neuralnet
 # library(gamlss.add)
@@ -24,7 +28,6 @@ library(pROC)
 #plots
 library(viridisLite)
 library(plot3D)
-library(scatterplot3d)
 library(plotly)
 
 # seed ----
@@ -39,7 +42,7 @@ data_placenta$CI2 <- factor(data_placenta$CI2)
 
 # filter data ----
 
-varSupp <- caret::nearZeroVar(data_placenta)
+varSupp <- nearZeroVar(data_placenta)
 data_placenta <- data_placenta[, -varSupp]
 
 cor_col <- findCorrelation(cor(data_placenta[,-1]), cutoff=0.8)
@@ -99,71 +102,56 @@ perc_match = function(cmatrix){
   return (sum(diag(cmatrix)) / sum(cmatrix) * 100)
 }
 
-# PCA ----
-
-PCA = function(data){
-  # start a mock pca
-  mock_pca <- dudi.pca(data[-1],
-                       scannf=FALSE,
-                       nf=2)
-  # observe the eingen values to determine optimal dimension reduction
-  inertia <- inertia.dudi(mock_pca)
-  
-  # we can determine the optimal number of dimension graphically
-  plot(inertia$tot.inertia$`cum(%)`)
-  
-  # but here we will use the condition of keeping 80% of the information
-  ndim <- min(which(inertia$tot.inertia$`cum(%)`>80))
-  abline(v=ndim)
-  
-  # perform pca once again, with correct number of final dimensions
-  final_pca <- dudi.pca(data[-1],
-                        scannf=FALSE,
-                        nf=ndim)
-  
-  # graph the variables
-  fviz_pca_var(final_pca,
-               col.var = "contrib", # Color by contributions to the PC
-               gradient.cols = viridis(100)
-  )
-  
-  fviz_pca_ind(final_pca,
-               col.ind = sets$train$CI2, # color by groups
-               palette = c("#00AFBB",  "#FC4E07"),
-               addEllipses = TRUE, # Concentration ellipses
-               ellipse.type = "norm",
-               legend.title = "Groups",
-               axes = c(1, 2)
-  )
-  
-  return(final_pca)
-}
-
-# apply PCA result ----
-
-comp_pca = function(data){
-  # get PCA results
-  res_pca <- PCA(data$train)
-  
-  # modify train data by PCA output
-  data$train <- cbind(data$train$CI2, res_pca$l1)
-  names(data$train) <- c("CI2", paste0("C", seq(length(res_pca$l1))))
-  
-  # cross product with pca transformation matrix
-  test_trans <- as.matrix(data$test[-1]) %*% as.matrix(res_pca$c1)
-  
-  # modify test data by cross product results
-  data$test <- cbind(CI2=data$test$CI2, as.data.frame(scale(test_trans)))
-  names(data$test) <- c("CI2", paste0("C", seq(length(res_pca$l1))))
-  
-  return(data)
-}
-
-# Results ----
+# Divide in sets ----
 
 sets <- train_test(data_placenta, .70)
 
-sets <- comp_pca(sets)
+# PCA ----
+
+mock_pca <- dudi.pca(sets$train[-1],
+                     scannf=FALSE,
+                     nf=2)
+# observe the eingen values to determine optimal dimension reduction
+inertia <- inertia.dudi(mock_pca)
+
+# we can determine the optimal number of dimension graphically
+plot(inertia$tot.inertia$`cum(%)`, xlab="CP", ylab="cumulative percentage of variance")
+
+# but here we will use the condition of keeping 80% of the information
+ndim <- min(which(inertia$tot.inertia$`cum(%)`>80))
+abline(v=ndim)
+
+# perform pca once again, with correct number of final dimensions
+res_pca <- dudi.pca(sets$train[-1],
+                    scannf=FALSE,
+                    nf=ndim)
+
+# graph the variables
+fviz_pca_var(res_pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = viridis(100)
+)
+
+# graph the individuals
+fviz_pca_ind(res_pca,
+             col.ind = sets$train$CI2, # color by groups
+             palette = c("#00AFBB",  "#FC4E07"),
+             addEllipses = TRUE, # Concentration ellipses
+             ellipse.type = "norm",
+             legend.title = "Groups",
+             axes = c(1, 2)
+)
+
+# modify train data by PCA output
+sets$train <- cbind(sets$train$CI2, res_pca$l1)
+names(sets$train) <- c("CI2", paste0("C", seq(length(res_pca$l1))))
+
+# cross product with pca transformation matrix
+test_trans <- as.matrix(sets$test[-1]) %*% as.matrix(res_pca$c1)
+
+# modify test data by cross product results
+sets$test <- cbind(CI2=sets$test$CI2, as.data.frame(scale(test_trans)))
+names(sets$test) <- c("CI2", paste0("C", seq(length(res_pca$l1))))
 
 # Optimize number of neurons ----
 
@@ -260,11 +248,11 @@ plot_ly() %>%
               type = "surface",
               colorscale = "Viridis")
 
+# compute with correct number of neurones ----
+
 max_auc  <- which(z.pred == max(z.pred), arr.ind = TRUE)
 opt_n1 <- x.pred[max_auc[2]]
 opt_n2 <- y.pred[max_auc[1]]
-
-# compute with correct number of neurones ----
 
 preds <- neural_network(sets, c(opt_n1, opt_n2))
 
