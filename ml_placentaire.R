@@ -1,8 +1,3 @@
-# ---
-# title: Prediction de la permeabilite du placenta par un reseau de neurones
-# autors: Fernando Aguirre Huacaychuco | William Amory | Jeyani George Clement | Baptiste Rousseau | Maya Zygadlo
-# ---
-
 # libraries ----
 # data juggling
 library(caret, include.only=c('findCorrelation', 
